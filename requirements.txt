@@ -1,0 +1,5 @@
+azure-functions
+requests
+azure-keyvault-secrets
+azure-identity
+azure-storage-file-datalake
