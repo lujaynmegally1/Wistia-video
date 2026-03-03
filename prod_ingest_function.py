@@ -195,6 +195,7 @@ def get_last_ingested_date():
     return START_DATE
 
 
+
 def update_watermark(date: str):
     """Write today's run date as the new watermark."""
     with open(WATERMARK_FILE, "w") as f:
