@@ -1,0 +1,21 @@
+{
+  "version": "2.0",
+  "logging": {
+    "applicationInsights": {
+      "samplingSettings": {
+        "isEnabled": true
+      }
+    }
+  }
+}
+```
+
+---
+
+## `requirements.txt`
+```
+azure-functions
+requests
+azure-keyvault-secrets
+azure-identity
+azure-storage-file-datalake
