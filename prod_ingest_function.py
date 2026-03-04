@@ -26,6 +26,7 @@ WATERMARK_FILE  = "last_ingested.txt"
 def wistia_ingestion(myTimer: func.TimerRequest) -> None:
     logging.info("🚀 Wistia ingestion pipeline started")
 
+
     # ── Get API token from Key Vault ──────────────────────────────
     credential    = DefaultAzureCredential()
     secret_client = SecretClient(vault_url=KEY_VAULT_URL, credential=credential)
