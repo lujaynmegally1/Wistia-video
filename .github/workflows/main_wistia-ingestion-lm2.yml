@@ -21,12 +21,8 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt --target=".python_packages/lib/site-packages"
-
       - name: Zip artifact
-        run: zip -r release.zip . --exclude "*.git*"
+        run: zip -r release.zip . --exclude "*.git*" --exclude ".python_packages/*"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -54,7 +50,7 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_4326066641284E77829DBD0A59D27BF6 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_DD2963B537B74BDC96FD5D6E0136961E }}
 
-      - name: Set WEBSITE_RUN_FROM_PACKAGE to 1
+      - name: Set app settings
         uses: azure/cli@v2
         with:
           azcliversion: latest
@@ -62,12 +58,12 @@ jobs:
             az functionapp config appsettings set \
               --name wistia-ingestion-lm2 \
               --resource-group wistia-analytics \
-              --settings WEBSITE_RUN_FROM_PACKAGE=1 ENABLE_ORYX_BUILD=0
+              --settings WEBSITE_RUN_FROM_PACKAGE=0 ENABLE_ORYX_BUILD=true SCM_DO_BUILD_DURING_DEPLOYMENT=true
 
       - name: Deploy to Azure Functions
         uses: Azure/functions-action@v1
         with:
           app-name: 'wistia-ingestion-lm2'
           package: 'release.zip'
-          scm-do-build-during-deployment: false
-          enable-oryx-build: false
+          scm-do-build-during-deployment: true
+          enable-oryx-build: true
