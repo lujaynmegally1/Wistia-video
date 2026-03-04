@@ -77,3 +77,6 @@ jobs:
           app-name: 'wistia-ingestion-lm'
           slot-name: 'Production'
           package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
+
+
+          
