@@ -200,4 +200,6 @@ def update_watermark(date: str):
         f.write(date)
     logging.info(f"✅ Watermark updated to: {date}")
 
+
+
     
