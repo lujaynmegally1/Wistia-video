@@ -61,7 +61,7 @@ jobs:
           inlineScript: |
             az functionapp config appsettings set \
               --name wistia-ingestion-lm2 \
-              --resource-group $(az functionapp show --name wistia-ingestion-lm2 --query resourceGroup -o tsv) \
+              --resource-group wistia-analytics \
               --settings WEBSITE_RUN_FROM_PACKAGE=1 ENABLE_ORYX_BUILD=0
 
       - name: Deploy to Azure Functions
