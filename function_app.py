@@ -8,7 +8,6 @@ from azure.keyvault.secrets import SecretClient
 from azure.identity import DefaultAzureCredential
 from azure.storage.filedatalake import DataLakeServiceClient
 
-# MUST be named 'app' and defined at the top level for indexing 
 app = func.FunctionApp()
 
 # ── Config ────────────────────────────────────────────────────────
@@ -16,21 +15,18 @@ MEDIA_IDs       = ["gskhw4w4lm", "v08dlrgr7v"]
 KEY_VAULT_URL   = "https://wistia-keyvault-lm.vault.azure.net/"
 STORAGE_ACCOUNT = "wistiaadls"
 CONTAINER       = "raw"
-START_DATE      = "2024-12-04" 
-WATERMARK_FILE  = "last_ingested.txt"
+START_DATE      = "2024-12-04"
+WATERMARK_BLOB  = "watermark/last_ingested.txt"
 
-@app.timer_trigger(schedule="0 0 8 * * *", 
-                   arg_name="myTimer", 
+@app.timer_trigger(schedule="0 0 8 * * *",
+                   arg_name="myTimer",
                    run_on_startup=False)
 def wistia_ingestion(myTimer: func.TimerRequest) -> None:
     logging.info("🚀 Wistia ingestion pipeline started")
 
     try:
-        # ── Initialize Clients INSIDE the function to avoid Indexing Errors ──
         credential    = DefaultAzureCredential()
         secret_client = SecretClient(vault_url=KEY_VAULT_URL, credential=credential)
-        
-        # Fetching secret at runtime 
         API_TOKEN     = secret_client.get_secret("wistia-api-token").value
         HEADERS       = {"Authorization": f"Bearer {API_TOKEN}"}
 
@@ -39,13 +35,14 @@ def wistia_ingestion(myTimer: func.TimerRequest) -> None:
             credential=credential
         )
 
-        # ── Incremental Logic ──
-        start_date = get_last_ingested_date()
+        start_date = get_last_ingested_date(adls_client)
         end_date   = datetime.today().strftime("%Y-%m-%d")
 
         if start_date > end_date:
             logging.info("✅ Pipeline already up to date.")
             return
+
+        logging.info(f"📅 Ingesting from {start_date} to {end_date}")
 
         for media_id in MEDIA_IDs:
             # 1. Metadata
@@ -54,7 +51,7 @@ def wistia_ingestion(myTimer: func.TimerRequest) -> None:
                 save_to_adls(adls_client, metadata, f"metadata/media_id={media_id}/date={end_date}/metadata.json")
 
             # 2. Stats
-            stats = call_api(f"https://api.wistia.com/v1/stats/medias/{media_id}/by_date.json", 
+            stats = call_api(f"https://api.wistia.com/v1/stats/medias/{media_id}/by_date.json",
                              HEADERS, params={"start_date": start_date, "end_date": end_date})
             if stats:
                 save_to_adls(adls_client, stats, f"stats_by_date/media_id={media_id}/date={end_date}/stats.json")
@@ -64,11 +61,12 @@ def wistia_ingestion(myTimer: func.TimerRequest) -> None:
             if events:
                 save_to_adls(adls_client, events, f"events/media_id={media_id}/date={end_date}/events.json")
 
-        update_watermark(end_date)
+        update_watermark(adls_client, end_date)
         logging.info("🎉 Ingestion complete!")
 
     except Exception as e:
         logging.error(f"❌ Execution Error: {e}")
+        raise
 
 # ── Helpers ───────────────────────────────────────────────────────
 
@@ -88,9 +86,11 @@ def fetch_events(media_id, start_date, end_date, headers):
     while True:
         params = {"media_id": media_id, "start_date": start_date, "end_date": end_date, "per_page": 100, "page": page}
         data = call_api("https://api.wistia.com/v1/stats/events.json", headers, params)
-        if not data: break
-        all_events.extend(data) # Use extend for list merging 
-        if len(data) < 100: break
+        if not data:
+            break
+        all_events.extend(data)
+        if len(data) < 100:
+            break
         page += 1
     return all_events
 
@@ -99,17 +99,31 @@ def save_to_adls(adls_client, data, path):
         fs = adls_client.get_file_system_client(CONTAINER)
         file_client = fs.get_file_client(path)
         file_client.upload_data(json.dumps(data, indent=2), overwrite=True)
+        logging.info(f"✅ Saved to ADLS: {path}")
     except Exception as e:
-        logging.error(f"❌ ADLS Error: {e}")
+        logging.error(f"❌ ADLS Error saving {path}: {e}")
 
-def get_last_ingested_date():
-    if os.path.exists(WATERMARK_FILE):
-        with open(WATERMARK_FILE, "r") as f:
-            last_date = f.read().strip()
-            if last_date:
-                return (datetime.strptime(last_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+def get_last_ingested_date(adls_client):
+    """Read watermark from ADLS so it persists across function restarts."""
+    try:
+        fs = adls_client.get_file_system_client(CONTAINER)
+        file_client = fs.get_file_client(WATERMARK_BLOB)
+        download = file_client.download_file()
+        last_date = download.readall().decode("utf-8").strip()
+        if last_date:
+            next_date = (datetime.strptime(last_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+            logging.info(f"📌 Watermark found: {last_date}, starting from {next_date}")
+            return next_date
+    except Exception:
+        logging.info(f"📌 No watermark found, using START_DATE: {START_DATE}")
     return START_DATE
 
-def update_watermark(date: str):
-    with open(WATERMARK_FILE, "w") as f:
-        f.write(date)
+def update_watermark(adls_client, date: str):
+    """Persist watermark to ADLS."""
+    try:
+        fs = adls_client.get_file_system_client(CONTAINER)
+        file_client = fs.get_file_client(WATERMARK_BLOB)
+        file_client.upload_data(date.encode("utf-8"), overwrite=True)
+        logging.info(f"📌 Watermark updated to {date}")
+    except Exception as e:
+        logging.error(f"❌ Failed to update watermark: {e}")

@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 env:
-  AZURE_FUNCTIONAPP_PACKAGE_PATH: '.' 
+  AZURE_FUNCTIONAPP_PACKAGE_PATH: '.'
   PYTHON_VERSION: '3.11'
 
 jobs:
@@ -23,12 +23,10 @@ jobs:
 
       - name: Install dependencies
         run: |
-          # The V2 model requires dependencies in this specific folder for Linux Consumption
           pip install -r requirements.txt --target=".python_packages/lib/site-packages"
 
       - name: Zip artifact
-        # This command ensures we stay in the root and include hidden folders like .python_packages
-        run: zip -r release.zip .
+        run: zip -r release.zip . --exclude "*.git*"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -56,10 +54,20 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_4326066641284E77829DBD0A59D27BF6 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_DD2963B537B74BDC96FD5D6E0136961E }}
 
+      - name: Set WEBSITE_RUN_FROM_PACKAGE to 1
+        uses: azure/cli@v2
+        with:
+          azcliversion: latest
+          inlineScript: |
+            az functionapp config appsettings set \
+              --name wistia-ingestion-lm2 \
+              --resource-group $(az functionapp show --name wistia-ingestion-lm2 --query resourceGroup -o tsv) \
+              --settings WEBSITE_RUN_FROM_PACKAGE=1 ENABLE_ORYX_BUILD=0
+
       - name: Deploy to Azure Functions
         uses: Azure/functions-action@v1
         with:
           app-name: 'wistia-ingestion-lm2'
-          package: 'release.zip' # Point directly to the zip file
+          package: 'release.zip'
           scm-do-build-during-deployment: false
           enable-oryx-build: false
