@@ -63,3 +63,5 @@ jobs:
           app-name: 'wistia-ingestion-lm'
           # Point directly to the downloaded zip file
           package: './release.zip'
+
+          
