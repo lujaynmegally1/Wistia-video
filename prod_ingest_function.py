@@ -13,7 +13,7 @@ app = func.FunctionApp()
 # ── Config ────────────────────────────────────────────────────────
 MEDIA_IDs       = ["gskhw4w4lm", "v08dlrgr7v"]
 KEY_VAULT_URL   = "https://wistia-keyvault-lm.vault.azure.net/"
-STORAGE_ACCOUNT = "wistiaadlslm"
+STORAGE_ACCOUNT = "wistiaadls"
 CONTAINER       = "raw"
 START_DATE      = "2024-12-04"  # fallback if no watermark
 WATERMARK_FILE  = "last_ingested.txt"
@@ -202,4 +202,3 @@ def update_watermark(date: str):
 
 
 
-    
