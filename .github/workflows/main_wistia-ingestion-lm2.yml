@@ -62,7 +62,7 @@ jobs:
             az functionapp config appsettings set \
               --name wistia-ingestion-lm2 \
               --resource-group wistia-analytics \
-              --settings WEBSITE_RUN_FROM_PACKAGE=1 ENABLE_ORYX_BUILD=false SCM_DO_BUILD_DURING_DEPLOYMENT=false
+              --settings ENABLE_ORYX_BUILD=false SCM_DO_BUILD_DURING_DEPLOYMENT=false AzureWebJobsFeatureFlags=EnableWorkerIndexing
 
       - name: Deploy to Azure Functions
         uses: Azure/functions-action@v1
@@ -71,3 +71,4 @@ jobs:
           package: 'release.zip'
           scm-do-build-during-deployment: false
           enable-oryx-build: false
+          remote-build: false
