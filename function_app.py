@@ -8,94 +8,72 @@ from azure.keyvault.secrets import SecretClient
 from azure.identity import DefaultAzureCredential
 from azure.storage.filedatalake import DataLakeServiceClient
 
-app = func.FunctionApp()
+# This is required for the V2 model to index your functions correctly
+app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
 
 # ── Config ────────────────────────────────────────────────────────
 MEDIA_IDs       = ["gskhw4w4lm", "v08dlrgr7v"]
 KEY_VAULT_URL   = "https://wistia-keyvault-lm.vault.azure.net/"
 STORAGE_ACCOUNT = "wistiaadls"
 CONTAINER       = "raw"
-START_DATE      = "2024-12-04"  # fallback if no watermark
+START_DATE      = "2024-12-04"  
 WATERMARK_FILE  = "last_ingested.txt"
 
-
 # ── Timer Trigger — runs daily at 8am UTC ────────────────────────
-@app.timer_trigger(schedule="0 0 8 * * *",
-                   arg_name="myTimer",
+@app.timer_trigger(schedule="0 0 8 * * *", 
+                   arg_name="myTimer", 
                    run_on_startup=False)
 def wistia_ingestion(myTimer: func.TimerRequest) -> None:
+    if myTimer.past_due:
+        logging.info('The timer is running late!')
+
     logging.info("🚀 Wistia ingestion pipeline started")
 
+    try:
+        # ── Get API token from Key Vault ──────────────────────────────
+        credential    = DefaultAzureCredential()
+        secret_client = SecretClient(vault_url=KEY_VAULT_URL, credential=credential)
+        # Using .get_secret().value directly
+        API_TOKEN     = secret_client.get_secret("wistia-api-token").value
+        HEADERS       = {"Authorization": f"Bearer {API_TOKEN}"}
 
-    # ── Get API token from Key Vault ──────────────────────────────
-    credential    = DefaultAzureCredential()
-    secret_client = SecretClient(vault_url=KEY_VAULT_URL, credential=credential)
-    API_TOKEN     = secret_client.get_secret("wistia-api-token").value
-    HEADERS       = {"Authorization": f"Bearer {API_TOKEN}"}
-
-    # ── ADLS Client ───────────────────────────────────────────────
-    adls_client = DataLakeServiceClient(
-        account_url=f"https://{STORAGE_ACCOUNT}.dfs.core.windows.net",
-        credential=credential
-    )
-
-    # ── Incremental Watermark Logic ───────────────────────────────
-    start_date = get_last_ingested_date()
-    end_date   = datetime.today().strftime("%Y-%m-%d")
-
-    if start_date > end_date:
-        logging.info("✅ Pipeline already up to date. Nothing to ingest.")
-        return
-
-    logging.info(f"📅 Ingesting from {start_date} to {end_date}")
-
-    # ── Process Each Media ID ─────────────────────────────────────
-    for media_id in MEDIA_IDs:
-        logging.info(f"\n{'='*50}")
-        logging.info(f"Processing Media ID: {media_id}")
-        logging.info(f"{'='*50}")
-
-        # 1. Media Metadata → dim_media
-        logging.info(f"📹 Fetching metadata for {media_id}")
-        metadata = call_api(
-            f"https://api.wistia.com/v1/medias/{media_id}.json",
-            HEADERS
+        # ── ADLS Client ───────────────────────────────────────────────
+        adls_client = DataLakeServiceClient(
+            account_url=f"https://{STORAGE_ACCOUNT}.dfs.core.windows.net",
+            credential=credential
         )
-        if metadata:
-            save_to_adls(
-                adls_client,
-                metadata,
-                f"metadata/media_id={media_id}/date={end_date}/metadata.json"
-            )
 
-        # 2. Stats by Date → fact_media_engagement_daily
-        logging.info(f"📊 Fetching stats by date for {media_id} ({start_date} to {end_date})")
-        stats = call_api(
-            f"https://api.wistia.com/v1/stats/medias/{media_id}/by_date.json",
-            HEADERS,
-            params={"start_date": start_date, "end_date": end_date}
-        )
-        if stats:
-            save_to_adls(
-                adls_client,
-                stats,
-                f"stats_by_date/media_id={media_id}/date={end_date}/stats.json"
-            )
+        # ── Incremental Watermark Logic ───────────────────────────────
+        start_date = get_last_ingested_date()
+        # Fix: For your 7-day run, you might want to hardcode this or use today
+        end_date   = datetime.today().strftime("%Y-%m-%d")
 
-        # 3. Events with Pagination → dim_visitor + fact_visitor_events
-        logging.info(f"👥 Fetching events for {media_id} ({start_date} to {end_date})")
-        events = fetch_events(media_id, start_date, end_date, HEADERS)
-        if events:
-            save_to_adls(
-                adls_client,
-                events,
-                f"events/media_id={media_id}/date={end_date}/events.json"
-            )
+        if start_date > end_date:
+            logging.info("✅ Pipeline already up to date. Nothing to ingest.")
+            return
 
-    # ── Update Watermark After Successful Run ─────────────────────
-    update_watermark(end_date)
-    logging.info("🎉 Ingestion complete!")
+        for media_id in MEDIA_IDs:
+            # 1. Media Metadata
+            metadata = call_api(f"https://api.wistia.com/v1/medias/{media_id}.json", HEADERS)
+            if metadata:
+                save_to_adls(adls_client, metadata, f"metadata/media_id={media_id}/date={end_date}/metadata.json")
 
+            # 2. Stats by Date
+            stats = call_api(f"https://api.wistia.com/v1/stats/medias/{media_id}/by_date.json", 
+                             HEADERS, params={"start_date": start_date, "end_date": end_date})
+            if stats:
+                save_to_adls(adls_client, stats, f"stats_by_date/media_id={media_id}/date={end_date}/stats.json")
+
+            # 3. Events
+            events = fetch_events(media_id, start_date, end_date, HEADERS)
+            if events:
+                save_to_adls(adls_client, events, f"events/media_id={media_id}/date={end_date}/events.json")
+
+        update_watermark(end_date)
+        logging.info("🎉 Ingestion complete!")
+
+    except Exception as e:
+        logging.error(f"❌ Global Pipeline Error: {e}")
 
 # ── API Call Helper ───────────────────────────────────────────────
 def call_api(url, headers, params=None):
