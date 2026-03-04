@@ -27,7 +27,7 @@ jobs:
           pip install -r requirements.txt --target=".python_packages/lib/site-packages"
 
       - name: Zip artifact for deployment
-        # This zips the CONTENTS of the current folder, not the folder itself
+        # Important: Zip the contents of the current directory into release.zip
         run: zip -r release.zip . -x "venv/*" ".git/*" ".github/*"
 
       - name: Upload artifact
@@ -48,9 +48,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: python-app
-
-      - name: Unzip for deployment
-        run: unzip python-app.zip # Artifacts are zipped by upload-artifact, we unzip the inner zip
+          path: .
 
       - name: Login to Azure
         uses: azure/login@v2
@@ -63,6 +61,5 @@ jobs:
         uses: Azure/functions-action@v1
         with:
           app-name: 'wistia-ingestion-lm'
-          package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
-          scm-do-build-during-deployment: true
-          enable-oryx-build: true
+          # Point directly to the downloaded zip file
+          package: './release.zip'
