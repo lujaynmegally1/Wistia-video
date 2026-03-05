@@ -27,7 +27,8 @@ def wistia_ingestion(myTimer: func.TimerRequest) -> None:
     try:
         credential    = DefaultAzureCredential()
         secret_client = SecretClient(vault_url=KEY_VAULT_URL, credential=credential)
-        API_TOKEN     = secret_client.get_secret("wistia-api-token").value
+        # API_TOKEN     = secret_client.get_secret("wistia-api-token").value
+        API_TOKEN = "0323ade64e13f79821bdc0f2a9410d9ec3873aa9df01f8a4a54d4e0f3dd2e6b4"
         HEADERS       = {"Authorization": f"Bearer {API_TOKEN}"}
 
         adls_client = DataLakeServiceClient(
@@ -127,3 +128,51 @@ def update_watermark(adls_client, date: str):
         logging.info(f"📌 Watermark updated to {date}")
     except Exception as e:
         logging.error(f"❌ Failed to update watermark: {e}")
+
+
+
+@app.route(route="test", auth_level=func.AuthLevel.ANONYMOUS)
+def test_trigger(req: func.HttpRequest) -> func.HttpResponse:
+    logging.info("🧪 Test trigger fired")
+    try:
+        credential = DefaultAzureCredential()
+        secret_client = SecretClient(vault_url=KEY_VAULT_URL, credential=credential)
+        API_TOKEN = secret_client.get_secret("wistia-api-token").value
+        HEADERS = {"Authorization": f"Bearer {API_TOKEN}"}
+
+        adls_client = DataLakeServiceClient(
+            account_url=f"https://{STORAGE_ACCOUNT}.dfs.core.windows.net",
+            credential=credential
+        )
+
+        start_date = get_last_ingested_date(adls_client)
+        end_date = datetime.today().strftime("%Y-%m-%d")
+
+        if start_date > end_date:
+            return func.HttpResponse("✅ Already up to date", status_code=200)
+
+        for media_id in MEDIA_IDs:
+            metadata = call_api(f"https://api.wistia.com/v1/medias/{media_id}.json", HEADERS)
+            if metadata:
+                save_to_adls(adls_client, metadata, f"metadata/media_id={media_id}/date={end_date}/metadata.json")
+
+            stats = call_api(f"https://api.wistia.com/v1/stats/medias/{media_id}/by_date.json",
+                             HEADERS, params={"start_date": start_date, "end_date": end_date})
+            if stats:
+                save_to_adls(adls_client, stats, f"stats_by_date/media_id={media_id}/date={end_date}/stats.json")
+
+            events = fetch_events(media_id, start_date, end_date, HEADERS)
+            if events:
+                save_to_adls(adls_client, events, f"events/media_id={media_id}/date={end_date}/events.json")
+
+        update_watermark(adls_client, end_date)
+        return func.HttpResponse("🎉 Ingestion complete!", status_code=200)
+
+    except Exception as e:
+        logging.error(f"❌ Error: {e}")
+        return func.HttpResponse(f"❌ Error: {str(e)}", status_code=500)
+```
+
+Deploy via VS Code then hit this URL in your browser:
+```
+https://wistia-ingestion-lm2-a4chezbde9hkdxc7.canadacentral-01.azurewebsites.net/api/test
