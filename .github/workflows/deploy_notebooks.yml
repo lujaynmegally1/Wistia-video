@@ -21,14 +21,11 @@ jobs:
 
       - name: Install Databricks CLI
         run: pip install databricks-cli
-
       - name: Deploy Notebooks to Databricks
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
         run: |
-          databricks configure --token <<EOF
-          $DATABRICKS_HOST
-          $DATABRICKS_TOKEN
-          EOF
+          export DATABRICKS_HOST=$DATABRICKS_HOST
+          export DATABRICKS_TOKEN=$DATABRICKS_TOKEN
           databricks workspace import_dir notebooks /Workspace/Wistia --overwrite
