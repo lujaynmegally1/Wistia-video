@@ -11,7 +11,7 @@ events_df = spark.read.option("multiLine", "true").json(
     "abfss://raw@wistiaadls.dfs.core.windows.net/events/*/*/*.json"
 )
 print("✅ Bronze data loaded")
-print(f"Metadata: {metadata_df.count()} rows")
+print(f"Metgitignoreadata: {metadata_df.count()} rows")
 print(f"Stats:    {stats_df.count()} rows")
 print(f"Events:   {events_df.count()} rows")
 
