@@ -17,6 +17,9 @@ CONTAINER       = "raw"
 START_DATE      = "2026-03-06"
 WATERMARK_BLOB  = "watermark/last_ingested.txt"
 
+# ── Retry Config ──────────────────────────────────────────────────
+MAX_RETRIES   = 3
+RETRY_BACKOFF = 2  # exponential backoff: 2s, 4s, 8s
 
 # ── Timer Trigger ─────────────────────────────────────────────────
 # used for ingestion during development/testing, but we switched to ADF HTTP trigger for more control (e.g. retries, etc.)
@@ -62,162 +65,212 @@ WATERMARK_BLOB  = "watermark/last_ingested.txt"
 #         raise
 
 
-# ── Test HTTP Trigger ─────────────────────────────────────────────
+# ── ADF Production Ingest Trigger ────────────────────────────────
 @app.route(route="test", auth_level=func.AuthLevel.ANONYMOUS)
-def test_trigger(req: func.HttpRequest) -> func.HttpResponse:
-    results = []
-
-    def log(msg):
-        logging.info(msg)
-        results.append(msg)
-
-    log("🧪 Test trigger fired")
+def ingest_trigger(req: func.HttpRequest) -> func.HttpResponse:
+    pipeline_start = datetime.utcnow()
+    logging.info("=" * 60)
+    logging.info(f"🚀 ADF triggered ingestion started at {pipeline_start} UTC")
 
     try:
         credential = DefaultAzureCredential()
 
-        # ── Test 1: Key Vault ─────────────────────────────────────
+        # ── Key Vault ─────────────────────────────────────────────
         try:
             secret_client = SecretClient(vault_url=KEY_VAULT_URL, credential=credential)
-            API_TOKEN = secret_client.get_secret("wistia-api-token").value
-            log("✅ Key Vault OK")
+            API_TOKEN     = secret_client.get_secret("wistia-api-token").value
+            logging.info("✅ Key Vault: secret retrieved successfully")
         except Exception as e:
-            log(f"❌ Key Vault Error: {e}")
+            # No fallback — fail loudly so the issue is visible and fixed
+            logging.error(f"❌ Key Vault failed — cannot proceed without API token: {e}")
+            return func.HttpResponse(
+                f"❌ Key Vault error: {e}",
+                status_code=500
+            )
 
-        # ── Test 2: ADLS Connection ───────────────────────────────
+        HEADERS = {"Authorization": f"Bearer {API_TOKEN}"}
+
+        # ── ADLS ──────────────────────────────────────────────────
         try:
             adls_client = DataLakeServiceClient(
                 account_url=f"https://{STORAGE_ACCOUNT}.dfs.core.windows.net",
                 credential=credential
             )
-            fs = adls_client.get_file_system_client(CONTAINER)
-            fs.get_file_system_properties()
-            log("✅ ADLS Connection OK")
+            logging.info("✅ ADLS: client initialized successfully")
         except Exception as e:
-            log(f"❌ ADLS Connection Error: {e}")
-            return func.HttpResponse("\n".join(results), status_code=500)
+            logging.error(f"❌ ADLS: failed to initialize client: {e}")
+            return func.HttpResponse(f"❌ ADLS connection error: {e}", status_code=500)
 
-        # ── Test 3: ADLS Write ────────────────────────────────────
-        try:
-            file_client = fs.get_file_client("test/test.json")
-            file_client.upload_data(json.dumps({"test": "ok"}), overwrite=True)
-            log("✅ ADLS Write OK")
-        except Exception as e:
-            log(f"❌ ADLS Write Error: {e}")
-            return func.HttpResponse("\n".join(results), status_code=500)
-
-        # ── Test 4: Wistia API ────────────────────────────────────
-        try:
-            HEADERS = {"Authorization": f"Bearer {API_TOKEN}"}
-            data = call_api("https://api.wistia.com/v1/medias/v08dlrgr7v.json", HEADERS)
-            if data:
-                log(f"✅ Wistia API OK — Media: {data.get('name')}")
-            else:
-                log("❌ Wistia API returned no data")
-        except Exception as e:
-            log(f"❌ Wistia API Error: {e}")
-            return func.HttpResponse("\n".join(results), status_code=500)
-
-        # ── Test 5: Full Ingestion ────────────────────────────────
-        log("🚀 Starting full ingestion...")
+        # ── Watermark ─────────────────────────────────────────────
         start_date = get_last_ingested_date(adls_client)
         end_date   = datetime.today().strftime("%Y-%m-%d")
-        log(f"📅 Ingesting from {start_date} to {end_date}")
 
         if start_date > end_date:
-            log("✅ Already up to date — nothing to ingest")
-        else:
-            for media_id in MEDIA_IDs:
-                log(f"\n{'='*40}")
-                log(f"📹 Processing {media_id}")
-                run_ingestion_for_media(media_id, start_date, end_date, HEADERS, adls_client, log)
+            logging.info("✅ Already up to date — nothing to ingest")
+            return func.HttpResponse("✅ Already up to date", status_code=200)
 
+        logging.info(f"📅 Ingestion window: {start_date} → {end_date}")
+
+        # ── Process Each Media ID ─────────────────────────────────
+        pipeline_success = True
+        for media_id in MEDIA_IDs:
+            logging.info("=" * 40)
+            logging.info(f"📹 Processing media_id: {media_id}")
+            media_start = datetime.utcnow()
+            try:
+                run_ingestion_for_media(
+                    media_id, start_date, end_date, HEADERS, adls_client, logging.info
+                )
+                elapsed = (datetime.utcnow() - media_start).seconds
+                logging.info(f"✅ {media_id} completed in {elapsed}s")
+            except Exception as e:
+                logging.error(f"❌ {media_id} failed: {e}")
+                pipeline_success = False
+                continue  # process next media ID even if this one fails
+
+        # ── Watermark Update ──────────────────────────────────────
+        if pipeline_success:
             update_watermark(adls_client, end_date)
-            log("🎉 Ingestion complete!")
-
-        return func.HttpResponse("\n".join(results), status_code=200)
+            elapsed_total = (datetime.utcnow() - pipeline_start).seconds
+            logging.info("=" * 60)
+            logging.info(f"🎉 Ingestion complete in {elapsed_total}s")
+            return func.HttpResponse("✅ Ingestion complete", status_code=200)
+        else:
+            logging.warning("⚠️ Watermark NOT updated — one or more media IDs failed")
+            return func.HttpResponse(
+                "⚠️ Ingestion completed with errors — watermark not updated",
+                status_code=500
+            )
 
     except Exception as e:
-        results.append(f"❌ Fatal Error: {e}")
         logging.error(f"❌ Fatal Error: {e}")
-        return func.HttpResponse("\n".join(results), status_code=500)
+        return func.HttpResponse(f"❌ Fatal Error: {e}", status_code=500)
 
 
 # ── Core Ingestion Logic ──────────────────────────────────────────
 def run_ingestion_for_media(media_id, start_date, end_date, headers, adls_client, log):
     """
     Runs full ingestion for one media ID.
-    - Metadata: one file, partitioned by actual created_at date
-    - Stats: one file per day, partitioned by actual data date
-    - Events: one file per day, partitioned by actual event date
+    - Metadata : one file, partitioned by actual created_at date
+    - Stats    : one file per day, partitioned by actual data date
+    - Events   : one file per day, partitioned by actual event date
     """
 
-    # 1. Metadata — one file, use created date as partition
+    # 1. Metadata
+    log(f"  📄 Fetching metadata for {media_id}...")
     metadata = call_api(f"https://api.wistia.com/v1/medias/{media_id}.json", headers)
     if metadata:
-        created_date = metadata.get("created", end_date)[:10]  # extract YYYY-MM-DD
-        success = save_to_adls(
+        created_date = metadata.get("created", end_date)[:10]
+        success      = save_to_adls(
             adls_client, metadata,
             f"metadata/media_id={media_id}/date={created_date}/metadata.json"
         )
-        log(f"{'✅' if success else '❌'} Metadata {'saved' if success else 'FAILED'} for {media_id} (date={created_date})")
+        log(f"  {'✅' if success else '❌'} Metadata {'saved' if success else 'FAILED'} for {media_id} (date={created_date})")
+    else:
+        log(f"  ⚠️ Metadata: no data returned for {media_id}")
 
-    # 2. Stats by date — split each day into its own partition
+    # 2. Stats by date
+    log(f"  📊 Fetching stats for {media_id} ({start_date} → {end_date})...")
     stats = call_api(
         f"https://api.wistia.com/v1/stats/medias/{media_id}/by_date.json",
         headers,
         params={"start_date": start_date, "end_date": end_date}
     )
     if stats:
-        stats_saved = 0
+        stats_saved  = 0
+        stats_failed = 0
         for day_stat in stats:
-            data_date = day_stat.get("date")  # already YYYY-MM-DD
-            success = save_to_adls(
-                adls_client,
-                day_stat,
+            data_date = day_stat.get("date")
+            success   = save_to_adls(
+                adls_client, day_stat,
                 f"stats_by_date/media_id={media_id}/date={data_date}/stats.json"
             )
             if success:
                 stats_saved += 1
-        log(f"✅ Stats saved for {media_id} — {stats_saved} day partitions")
+            else:
+                stats_failed += 1
+        log(f"  ✅ Stats: {stats_saved} days saved, {stats_failed} failed")
+    else:
+        log(f"  ⚠️ Stats: no data returned for {media_id}")
 
-    # 3. Events — fetch all, then split by event date into separate partitions
+    # 3. Events
+    log(f"  📋 Fetching events for {media_id}...")
     events = fetch_events(media_id, start_date, end_date, headers, log)
     if events:
-        # Group events by date
         events_by_date = {}
         for event in events:
-            event_date = event.get("received_at", "")[:10]  # extract YYYY-MM-DD
+            event_date = event.get("received_at", "")[:10]
             if event_date not in events_by_date:
                 events_by_date[event_date] = []
             events_by_date[event_date].append(event)
 
-        # Save one file per date partition
+        events_saved  = 0
+        events_failed = 0
         for event_date, day_events in events_by_date.items():
             success = save_to_adls(
-                adls_client,
-                day_events,
+                adls_client, day_events,
                 f"events/media_id={media_id}/date={event_date}/events.json"
             )
-            log(f"{'✅' if success else '❌'} Events {'saved' if success else 'FAILED'} for {media_id} date={event_date} — {len(day_events)} events")
+            if success:
+                events_saved += 1
+            else:
+                events_failed += 1
+        log(f"  ✅ Events: {len(events)} total across {events_saved} date partitions, {events_failed} failed")
+    else:
+        log(f"  ⚠️ Events: no data returned for {media_id} (may be no views in this period)")
 
 
-# ── API Call Helper ───────────────────────────────────────────────
+# ── API Call with Retry + Timeout ─────────────────────────────────
 def call_api(url, headers, params=None):
-    try:
-        response = requests.get(url, headers=headers, params=params)
-        if response.status_code == 200:
-            return response.json()
-        logging.error(f"⚠️ API error {response.status_code}: {response.text}")
-    except Exception as e:
-        logging.error(f"❌ Request failed: {e}")
+    """
+    Calls Wistia API with exponential backoff retry.
+    - Timeout    : 30s per request
+    - Retries on : 429 (rate limit), 500/502/503/504 (server errors), timeouts, connection errors
+    - Fails hard : on 4xx client errors (except 429) — no point retrying bad requests
+    """
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=30)
+
+            if response.status_code == 200:
+                return response.json()
+
+            elif response.status_code == 429:
+                wait = RETRY_BACKOFF ** attempt
+                logging.warning(f"⚠️ Rate limited (429) — retrying in {wait}s (attempt {attempt}/{MAX_RETRIES})")
+                time.sleep(wait)
+
+            elif response.status_code in [500, 502, 503, 504]:
+                wait = RETRY_BACKOFF ** attempt
+                logging.warning(f"⚠️ Server error {response.status_code} — retrying in {wait}s (attempt {attempt}/{MAX_RETRIES})")
+                time.sleep(wait)
+
+            else:
+                logging.error(f"❌ API error {response.status_code}: {response.text}")
+                return None  # don't retry on 4xx client errors
+
+        except requests.exceptions.Timeout:
+            wait = RETRY_BACKOFF ** attempt
+            logging.warning(f"⚠️ Request timed out — retrying in {wait}s (attempt {attempt}/{MAX_RETRIES})")
+            time.sleep(wait)
+
+        except requests.exceptions.ConnectionError as e:
+            wait = RETRY_BACKOFF ** attempt
+            logging.warning(f"⚠️ Connection error: {e} — retrying in {wait}s (attempt {attempt}/{MAX_RETRIES})")
+            time.sleep(wait)
+
+        except Exception as e:
+            logging.error(f"❌ Unexpected error calling {url}: {e}")
+            return None
+
+    logging.error(f"❌ All {MAX_RETRIES} retries exhausted for {url}")
     return None
 
 
 # ── Pagination Helper ─────────────────────────────────────────────
 def fetch_events(media_id, start_date, end_date, headers, log=logging.info):
     all_events = []
-    page = 1
+    page       = 1
     while True:
         params = {
             "media_id"  : media_id,
@@ -228,26 +281,32 @@ def fetch_events(media_id, start_date, end_date, headers, log=logging.info):
         }
         data = call_api("https://api.wistia.com/v1/stats/events.json", headers, params)
         if not data:
+            log(f"  ⚠️ No data on page {page} — stopping pagination")
             break
         all_events.extend(data)
-        log(f"   Page {page}: {len(data)} events (total: {len(all_events)})")
+        log(f"  📄 Page {page}: {len(data)} events (total: {len(all_events)})")
         if len(data) < 100:
             break
         page += 1
     return all_events
 
 
-# ── ADLS Write Helper ─────────────────────────────────────────────
+# ── ADLS Write with Retry ─────────────────────────────────────────
 def save_to_adls(adls_client, data, path):
-    try:
-        fs          = adls_client.get_file_system_client(CONTAINER)
-        file_client = fs.get_file_client(path)
-        file_client.upload_data(json.dumps(data, indent=2), overwrite=True)
-        logging.info(f"✅ Saved to ADLS: {path}")
-        return True
-    except Exception as e:
-        logging.error(f"❌ ADLS Error saving {path}: {e}")
-        return False
+    """Writes JSON data to ADLS with exponential backoff retry."""
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            fs          = adls_client.get_file_system_client(CONTAINER)
+            file_client = fs.get_file_client(path)
+            file_client.upload_data(json.dumps(data, indent=2), overwrite=True)
+            logging.info(f"✅ Saved: {path}")
+            return True
+        except Exception as e:
+            wait = RETRY_BACKOFF ** attempt
+            logging.warning(f"⚠️ ADLS write failed (attempt {attempt}/{MAX_RETRIES}): {e} — retrying in {wait}s")
+            time.sleep(wait)
+    logging.error(f"❌ ADLS write failed after {MAX_RETRIES} retries: {path}")
+    return False
 
 
 # ── Watermark Helpers ─────────────────────────────────────────────
@@ -258,19 +317,26 @@ def get_last_ingested_date(adls_client):
         download    = file_client.download_file()
         last_date   = download.readall().decode("utf-8").strip()
         if last_date:
-            next_date = (datetime.strptime(last_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
-            logging.info(f"📌 Watermark found: {last_date}, starting from {next_date}")
+            next_date = (
+                datetime.strptime(last_date, "%Y-%m-%d") + timedelta(days=1)
+            ).strftime("%Y-%m-%d")
+            logging.info(f"📌 Watermark found: {last_date} → starting from {next_date}")
             return next_date
-    except Exception:
-        logging.info(f"📌 No watermark found, using START_DATE: {START_DATE}")
+    except Exception as e:
+        logging.info(f"📌 No watermark found ({e}) → using START_DATE: {START_DATE}")
     return START_DATE
 
 
 def update_watermark(adls_client, date: str):
-    try:
-        fs          = adls_client.get_file_system_client(CONTAINER)
-        file_client = fs.get_file_client(WATERMARK_BLOB)
-        file_client.upload_data(date.encode("utf-8"), overwrite=True)
-        logging.info(f"📌 Watermark updated to {date}")
-    except Exception as e:
-        logging.error(f"❌ Failed to update watermark: {e}")
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            fs          = adls_client.get_file_system_client(CONTAINER)
+            file_client = fs.get_file_client(WATERMARK_BLOB)
+            file_client.upload_data(date.encode("utf-8"), overwrite=True)
+            logging.info(f"📌 Watermark updated to {date}")
+            return
+        except Exception as e:
+            wait = RETRY_BACKOFF ** attempt
+            logging.warning(f"⚠️ Watermark update failed (attempt {attempt}/{MAX_RETRIES}): {e} — retrying in {wait}s")
+            time.sleep(wait)
+    logging.error(f"❌ Watermark update failed after {MAX_RETRIES} retries")
