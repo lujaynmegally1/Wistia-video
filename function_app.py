@@ -19,46 +19,47 @@ WATERMARK_BLOB  = "watermark/last_ingested.txt"
 
 
 # ── Timer Trigger ─────────────────────────────────────────────────
-@app.timer_trigger(schedule="0 0 8 * * *",
-                   arg_name="myTimer",
-                   run_on_startup=False)
-def wistia_ingestion(myTimer: func.TimerRequest) -> None:
-    logging.info("🚀 Wistia ingestion pipeline started")
-    try:
-        credential    = DefaultAzureCredential()
-        secret_client = SecretClient(vault_url=KEY_VAULT_URL, credential=credential)
-        try:
-            API_TOKEN = secret_client.get_secret("wistia-api-token").value
-            logging.info("✅ API fetched from Key Vault successfully")
-        except Exception as e:
-            logging.warning(f"⚠️ Key Vault api key fetching failed") 
+# used for ingestion during development/testing, but we switched to ADF HTTP trigger for more control (e.g. retries, etc.)
+# @app.timer_trigger(schedule="0 0 8 * * *",
+#                    arg_name="myTimer",
+#                    run_on_startup=False)
+# def wistia_ingestion(myTimer: func.TimerRequest) -> None:
+#     logging.info("🚀 Wistia ingestion pipeline started")
+#     try:
+#         credential    = DefaultAzureCredential()
+#         secret_client = SecretClient(vault_url=KEY_VAULT_URL, credential=credential)
+#         try:
+#             API_TOKEN = secret_client.get_secret("wistia-api-token").value
+#             logging.info("✅ API fetched from Key Vault successfully")
+#         except Exception as e:
+#             logging.warning(f"⚠️ Key Vault api key fetching failed") 
 
-        HEADERS     = {"Authorization": f"Bearer {API_TOKEN}"}
-        adls_client = DataLakeServiceClient(
-            account_url=f"https://{STORAGE_ACCOUNT}.dfs.core.windows.net",
-            credential=credential
-        )
+#         HEADERS     = {"Authorization": f"Bearer {API_TOKEN}"}
+#         adls_client = DataLakeServiceClient(
+#             account_url=f"https://{STORAGE_ACCOUNT}.dfs.core.windows.net",
+#             credential=credential
+#         )
 
-        start_date = get_last_ingested_date(adls_client)
-        end_date   = datetime.today().strftime("%Y-%m-%d")
+#         start_date = get_last_ingested_date(adls_client)
+#         end_date   = datetime.today().strftime("%Y-%m-%d")
 
-        if start_date > end_date:
-            logging.info("✅ Pipeline already up to date.")
-            return
+#         if start_date > end_date:
+#             logging.info("✅ Pipeline already up to date.")
+#             return
 
-        logging.info(f"📅 Ingesting from {start_date} to {end_date}")
+#         logging.info(f"📅 Ingesting from {start_date} to {end_date}")
 
-        for media_id in MEDIA_IDs:
-            logging.info(f"{'='*50}")
-            logging.info(f"Processing Media ID: {media_id}")
-            run_ingestion_for_media(media_id, start_date, end_date, HEADERS, adls_client, logging.info)
+#         for media_id in MEDIA_IDs:
+#             logging.info(f"{'='*50}")
+#             logging.info(f"Processing Media ID: {media_id}")
+#             run_ingestion_for_media(media_id, start_date, end_date, HEADERS, adls_client, logging.info)
 
-        update_watermark(adls_client, end_date)
-        logging.info("🎉 Ingestion complete!")
+#         update_watermark(adls_client, end_date)
+#         logging.info("🎉 Ingestion complete!")
 
-    except Exception as e:
-        logging.error(f"❌ Execution Error: {e}")
-        raise
+#     except Exception as e:
+#         logging.error(f"❌ Execution Error: {e}")
+#         raise
 
 
 # ── Test HTTP Trigger ─────────────────────────────────────────────
@@ -82,8 +83,6 @@ def test_trigger(req: func.HttpRequest) -> func.HttpResponse:
             log("✅ Key Vault OK")
         except Exception as e:
             log(f"❌ Key Vault Error: {e}")
-            log("⚠️ Falling back to hardcoded token")
-            API_TOKEN = "0323ade64e13f79821bdc0f2a9410d9ec3873aa9df01f8a4a54d4e0f3dd2e6b4"
 
         # ── Test 2: ADLS Connection ───────────────────────────────
         try:

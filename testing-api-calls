@@ -1,0 +1,86 @@
+import requests
+from datetime import datetime
+
+# Config
+API_TOKEN  = "0323ade64e13f79821bdc0f2a9410d9ec3873aa9df01f8a4a54d4e0f3dd2e6b4"  # use your new regenerated token
+MEDIA_ID   = "v08dlrgr7v"
+START_DATE = "2026-03-06"
+END_DATE   = datetime.today().strftime("%Y-%m-%d")
+HEADERS    = {"Authorization": f"Bearer {API_TOKEN}"}
+
+print(f"Testing events for {MEDIA_ID} from {START_DATE} to {END_DATE}")
+print("=" * 60)
+
+# Test 1 — Media metadata
+print("\n📄 Test 1: Media Metadata")
+r = requests.get(f"https://api.wistia.com/v1/medias/{MEDIA_ID}.json", headers=HEADERS)
+print(f"Status: {r.status_code}")
+if r.status_code == 200:
+    data = r.json()
+    print(f"Name: {data.get('name')}")
+    print(f"Duration: {data.get('duration')}")
+else:
+    print(f"Error: {r.text}")
+
+# Test 2 — Stats by date
+print("\n📊 Test 2: Stats by Date")
+r = requests.get(
+    f"https://api.wistia.com/v1/stats/medias/{MEDIA_ID}/by_date.json",
+    headers=HEADERS,
+    params={"start_date": START_DATE, "end_date": END_DATE}
+)
+print(f"Status: {r.status_code}")
+if r.status_code == 200:
+    stats = r.json()
+    print(f"Days returned: {len(stats)}")
+    for day in stats:
+        if day.get("play_count", 0) > 0:
+            print(f"  ✅ {day['date']} — plays: {day['play_count']}, loads: {day['load_count']}, hours: {day['hours_watched']:.4f}")
+        else:
+            print(f"  ⚪ {day['date']} — no plays")
+else:
+    print(f"Error: {r.text}")
+
+# Test 3 — Events pagination
+print("\n📋 Test 3: Events")
+all_events = []
+page = 1
+while True:
+    r = requests.get(
+        "https://api.wistia.com/v1/stats/events.json",
+        headers=HEADERS,
+        params={
+            "media_id"  : MEDIA_ID,
+            "start_date": START_DATE,
+            "end_date"  : END_DATE,
+            "per_page"  : 100,
+            "page"      : page
+        }
+    )
+    print(f"Page {page} — Status: {r.status_code}")
+    if r.status_code != 200:
+        print(f"Error: {r.text}")
+        break
+    data = r.json()
+    if not data:
+        print(f"Page {page} returned empty — stopping")
+        break
+    all_events.extend(data)
+    print(f"  Got {len(data)} events (total: {len(all_events)})")
+    if len(data) < 100:
+        break
+    page += 1
+
+print(f"\n{'='*60}")
+print(f"Total events for {MEDIA_ID}: {len(all_events)}")
+
+if all_events:
+    print("\nSample event:")
+    e = all_events[0]
+    print(f"  event_key:       {e.get('event_key')}")
+    print(f"  received_at:     {e.get('received_at')}")
+    print(f"  percent_viewed:  {e.get('percent_viewed')}")
+    print(f"  visitor_key:     {e.get('visitor_key')}")
+    print(f"  embed_url:       {e.get('embed_url')}")
+else:
+    print("\n⚠️ No events found — this video may have had no views this week")
