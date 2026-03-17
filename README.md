@@ -47,6 +47,8 @@ Built entirely on Azure using Python, PySpark, and GitHub Actions CI/CD.
 
 ## Quick Start
 
+→ Full documentation of my project's process, decisions, trade offs, etc.: [`docs/project-log.md`](docs/project-log.md)
+
 ### Prerequisites
 - Azure subscription
 - Python 3.11+
@@ -91,7 +93,7 @@ Database: `wistia_gold`
 
 | Component | Method |
 |---|---|
-| Azure Functions | `func azure functionapp publish` via terminal |
+| Azure Functions | `func azure functionapp publish` via terminal. (Commit to GituHub for version control) |
 | Databricks Notebooks | GitHub Actions → Databricks CLI on push to `main` |
 
 Required GitHub Secrets:

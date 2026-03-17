@@ -4,6 +4,7 @@
 
 ![Architecture Diagram](docs/images/architecture-diagram.png)
 
+
 ## Component Breakdown
 
 ### Source — Wistia Stats API
