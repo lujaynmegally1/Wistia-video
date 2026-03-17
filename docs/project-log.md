@@ -4,7 +4,7 @@ A running log of decisions made, issues encountered, and how they were resolved.
 
 ---
 
-## Week 1 — API Exploration & Authentication
+## Step 1 — API Exploration & Authentication
 
 ### Endpoint Mapping
 Mapped Wistia API endpoints to the data model:
@@ -34,7 +34,7 @@ and "YouTube".
 
 ---
 
-## Week 2 — Azure Setup & Ingestion
+## Step 2 — Azure Setup & Ingestion
 
 ### Azure Resources Created
 - Resource Group: `Wistia-analytics`
@@ -54,9 +54,9 @@ Things tried:
 - Creating a new Function App entirely
 
 **Resolution:** Switched to VS Code Azure Functions extension for deployment,
-and use GitHub purely for version control. This is a valid production pattern —
-CI/CD for the function code is tracked in git, Databricks notebooks use
-full GitHub Actions automation.
+and use GitHub purely for version control. This is a valid production pattern for this project - 
+CI/CD for the function code is tracked in GitHub, and CI/CD for the Databricks notebook uses
+full GitHub Actions automation to deploy when a change is made. 
 
 ### Watermark Design
 **Decision:** Store watermark as a plain text file in ADLS
@@ -68,7 +68,7 @@ full GitHub Actions automation.
 
 ### ADLS Partitioning Decision
 **Problem:** Original code partitioned by ingestion date (run date), not
-data date. This meant all historical data landed in one folder named today.
+data date. This meant all historical data (for testing) landed in one folder named today.
 
 **Decision:** Partition by actual data date extracted from API response fields:
 - Metadata → `date=` from `created` field
@@ -79,7 +79,7 @@ This enables partition pruning and makes each partition meaningful.
 
 ---
 
-## Week 3 — Databricks & Transformation
+## Step 3 — Databricks & Transformation
 
 ### Unity Catalog Issue
 **Problem:** `input_file_name()` function blocked by Unity Catalog security policy.
@@ -93,16 +93,9 @@ output directly to gold. For this project's data volume and complexity,
 the silver layer added no practical value — the transformation from raw JSON
 to typed dimensional tables is a single clean step.
 
-### stats_by_date Partitioning Fix
-**Problem:** Stats API returns an array of daily objects. Original code saved
-the entire array as one file under today's date.
-
-**Resolution:** Loop through the array and save each day as its own partition
-file. This keeps partitioning consistent with the events data.
-
 ---
 
-## Week 4 — Synapse & Serving Layer
+## Step 4 — Synapse & Serving Layer
 
 ### Synapse Deployment Issue
 **Problem:** Synapse workspace deployment failed with
@@ -130,18 +123,40 @@ the Connect To dropdown explicitly set to `wistia_gold` before running.
 
 ---
 
-## Week 5 — Orchestration & CI/CD
+## Step 5 — Orchestration & CI/CD
 
-### ADF vs Timer Trigger
-**Decision:** Replaced Azure Function timer trigger with ADF schedule trigger.
+**ADF vs Timer Trigger**
+During development, an Azure Function timer trigger was used to run 
+ingestion daily at 8am UTC. This allowed the pipeline to run in 
+production for 7 consecutive days while the rest of the stack 
+(Databricks, Synapse, ADF) was being built out in parallel. The timer 
+trigger proved the incremental ingestion logic worked correctly — 
+watermark advancing daily, both media IDs processing, data landing in 
+ADLS partitions as expected.
+
+Once ADF was set up and the full end-to-end pipeline (ingestion → 
+transformation → serving) was complete, the timer trigger was replaced 
+with an ADF schedule trigger for production orchestration.
+
+**Decision:** Replace Azure Function timer trigger with ADF schedule trigger.
 
 Reasons:
-- ADF provides visual monitoring of every pipeline run
-- Built-in retry policies at activity level (2 retries per activity)
-- Activity-level timeouts configurable independently
-- Single place to see ingestion + transformation pipeline
-- Timer trigger kept in code as commented-out reference
+- ADF provides visual monitoring of every pipeline run with per-activity 
+  status, duration, and error details — the timer trigger only exposed 
+  logs via Azure Function invocations tab
+- Built-in retry policies at activity level (2 retries per activity) 
+  without writing retry logic into the function itself
+- Activity-level timeouts configurable independently — ingestion capped 
+  at 10 minutes, Databricks notebook at 1 hour
+- Single place to see the full pipeline — ingestion + transformation 
+  visible and manageable in one ADF pipeline view
+- ADF schedule trigger supports tumbling window configuration with a 
+  defined start/end date — better suited for the 7-day production 
+  requirement than a simple cron expression
 
+The timer trigger code is kept in `function_app.py` as a commented-out 
+reference, documenting the development approach and providing a fallback 
+option if ADF is ever unavailable.
 ### Databricks CI/CD
 Notebooks exported as `.py` source files and stored in `notebooks/` folder.
 GitHub Actions workflow uses Databricks CLI to deploy on push to `main`:
