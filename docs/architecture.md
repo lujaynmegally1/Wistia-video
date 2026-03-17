@@ -2,7 +2,7 @@
 
 ## Pipeline Overview
 
-![Architecture Diagram](docs/images/architecture-diagram.png)
+![Architecture Diagram](images/architecture-diagram.png)
 
 
 ## Component Breakdown
