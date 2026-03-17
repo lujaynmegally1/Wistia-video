@@ -77,6 +77,14 @@ data date. This meant all historical data (for testing) landed in one folder nam
 
 This enables partition pruning and makes each partition meaningful.
 
+### Error Handling Additions
+Added three layers of resilience to the Azure Function:
+1. API-level retries with exponential backoff (handles 429, 5xx, timeouts)
+2. ADLS write retries (3 attempts)
+3. Watermark update retries (3 attempts)
+4. Pipeline continues to next media ID on failure
+5. Watermark only advances on full success
+
 ---
 
 ## Step 3 — Databricks & Transformation
@@ -125,7 +133,7 @@ the Connect To dropdown explicitly set to `wistia_gold` before running.
 
 ## Step 5 — Orchestration & CI/CD
 
-**ADF vs Timer Trigger**
+### ADF vs Timer Trigger 
 During development, an Azure Function timer trigger was used to run 
 ingestion daily at 8am UTC. This allowed the pipeline to run in 
 production for 7 consecutive days while the rest of the stack 
@@ -164,30 +172,3 @@ GitHub Actions workflow uses Databricks CLI to deploy on push to `main`:
 databricks workspace import_dir notebooks /Workspace/Wistia --overwrite
 ```
 
-### Error Handling Additions
-Added three layers of resilience to the Azure Function:
-1. API-level retries with exponential backoff (handles 429, 5xx, timeouts)
-2. ADLS write retries (3 attempts)
-3. Watermark update retries (3 attempts)
-4. Pipeline continues to next media ID on failure
-5. Watermark only advances on full success
-
-### API Token Security
-**Decision:** Removed hardcoded API token fallback from production code.
-If Key Vault is unavailable the function returns 500 immediately.
-Rationale: a silent fallback to a hardcoded token masks a real
-infrastructure problem and is a security risk.
-
----
-
-## Media IDs
-
-| Media ID | Channel | Active Period |
-|---|---|---|
-| gskhw4w4lm | YouTube | Jan 2025 — present |
-| v08dlrgr7v | Facebook | Dec 2024 (limited activity) |
-
-**Note:** v08dlrgr7v had very limited activity after Dec 2024.
-The pipeline correctly ingests zero-event days for this media ID —
-the absence of events is valid data showing the video is no longer
-being actively promoted on Facebook.
