@@ -83,9 +83,13 @@ GET /api/test
 ### 6. Run Databricks transformation
 Databricks → Workspace → Wistia → run `wistia-video-gold`
 
-### 7. Query in Synapse
-Server: `wistia-synapse-lm-ondemand.sql.azuresynapse.net`
-Database: `wistia_gold`
+### 7. Set up Synapse views
+Connect to Synapse serverless endpoint and run the setup script:
+- Server: `wistia-synapse-lm-ondemand.sql.azuresynapse.net`
+- Script: [`docs/synapse-setup.sql`](docs/synapse-setup.sql)
+
+Note: Run `CREATE DATABASE` connected to `master`, then switch 
+to `wistia_gold` for all view creation statements.
 
 ---
 
