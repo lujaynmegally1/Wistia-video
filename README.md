@@ -9,28 +9,8 @@ Built entirely on Azure using Python, PySpark, and GitHub Actions CI/CD.
 ---
 
 ## Architecture
-```
-![Architecture Diagram](docs/images/architecture diagram wistia.png)
 
-Wistia Stats API
-      ↓
-Azure Functions (Python)
-— incremental ingestion, pagination, watermark logic
-      ↓
-ADLS Gen2 — raw layer
-(Hive-style partitioning: media_id= / date=)
-      ↓
-Databricks (PySpark)
-— raw JSON → gold Parquet (dimensional model)
-      ↓
-ADLS Gen2 — gold layer (Parquet)
-      ↓
-Azure Synapse Analytics
-— serverless SQL views over gold Parquet
-      ↓
-Power BI (optional)
-— marketing dashboard
-```
+![Architecture Diagram](docs/images/architecture-diagram.png)
 
 ---
 
@@ -46,6 +26,9 @@ Power BI (optional)
 | Secrets | Azure Key Vault |
 | CI/CD | GitHub Actions |
 | Version Control | GitHub |
+
+
+→ Full Component Breakdown & Design Rationale: [`docs/architecture.md`](docs/architecture.md)
 
 ---
 
