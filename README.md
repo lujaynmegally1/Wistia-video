@@ -47,7 +47,7 @@ Built entirely on Azure using Python, PySpark, and GitHub Actions CI/CD.
 
 ## Quick Start
 
-→ Full documentation of my project's process, decisions, trade offs, etc.: [`docs/project-log.md`](docs/project-log.md)
+→ Full documentation of my project's process, issues encountered, decisions, etc.: [`docs/project-log.md`](docs/project-log.md)
 
 ### Prerequisites
 - Azure subscription
