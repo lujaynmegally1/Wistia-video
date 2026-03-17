@@ -4,6 +4,7 @@
 
 ![Architecture Diagram](images/architecture-diagram.png)
 
+---
 
 ## Component Breakdown
 
@@ -48,9 +49,9 @@ config files. If Key Vault is unavailable the function fails loudly
 - Watermark not advanced on partial failure
 
 **Why Azure Functions over alternatives?**
-- Serverless — no infrastructure to manage, spins up on trigger
-- Native Python support matches project requirement
-- Directly invokable by ADF as a web activity
+- Serverless — no infrastructure to manage, spins up on trigger and shuts down immediately
+- Native Python support matches the project requirement
+- Directly invokable by ADF as a pipeline activity
 - Consumption tier means no cost when not running
 
 ---
@@ -69,16 +70,29 @@ every query.
 
 **Why ADF over Azure Logic Apps?**
 Logic Apps is designed for event-driven workflow automation, not data
-pipeline orchestration. It lacks native Databricks and Synapse integration,
-has no data-focused monitoring, and becomes difficult to manage as pipeline
-complexity grows. ADF keeps the entire pipeline — ingestion, transformation,
-and loading — visible and manageable in one place.
+pipeline orchestration. It could handle a simple scheduled API call, but
+it lacks native Databricks and Synapse integration, has no data-focused
+monitoring, and becomes difficult to manage as pipeline complexity grows.
+ADF keeps the entire pipeline — ingestion, transformation, and loading —
+visible and manageable in one place.
 
 **Why ADF over keeping the Azure Function timer trigger?**
 ADF provides visual monitoring, built-in retry policies, activity-level
-timeouts, and a single view of the entire pipeline. The Azure Function
-timer trigger was used during development and testing but replaced by ADF
-for production orchestration.
+timeouts, and a single view of the entire pipeline. Tumbling window
+triggers support a defined start/end date — ideal for the 7-day
+requirement of the project. The Azure Function timer trigger was used
+during development and testing but replaced by ADF for production
+orchestration.
+
+**CI/CD — Azure Functions**
+The Function code lives in GitHub. A GitHub Actions workflow was
+attempted for automatic deployment but encountered issues with
+`WEBSITE_RUN_FROM_PACKAGE` causing read-only mode. Deployment via
+Azure Functions Core Tools was used as the reliable alternative, with
+GitHub used for version control:
+```bash
+func azure functionapp publish wistia-ingestion-lm2 --python
+```
 
 ---
 
@@ -97,8 +111,9 @@ wistiaadls/
 raw/events/media_id=gskhw4w4lm/date=2026-03-10/events.json
 ```
 Each day's data lands in its own partition. This keeps daily runs
-isolated, makes it easy to reprocess a specific date, and allows
-Databricks to use partition pruning for faster reads.
+isolated, makes it easy to reprocess a specific date if something goes
+wrong, and preserves the original API response — important if downstream
+schema ever needs to change.
 
 **Why ADLS Gen2 over Azure Blob Storage?**
 
@@ -108,6 +123,18 @@ Databricks to use partition pruning for faster reads.
 | Directory listing | Single efficient call | Scans flat key namespace |
 | Spark driver | `abfss://` — optimised for big data | `wasbs://` — slower |
 | Databricks support | Native | Works but not optimised |
+
+- **Hierarchical Namespace** — true folder structure means directory
+  operations (rename, delete) are atomic and instant. Blob Storage has
+  to copy and delete every individual file, which is slow and
+  non-atomic — a problem Spark hits constantly during writes.
+- **Faster Directory Listing** — Spark lists all files in a directory
+  before planning a query. ADLS Gen2 returns directory contents in a
+  single efficient call; Blob Storage has to scan a flat key namespace.
+- **Optimised Driver (abfss://)** — ADLS Gen2 uses the Azure Blob File
+  System driver, built specifically for high-throughput big data.
+  Databricks has native support for it, giving better parallelism and
+  lower latency than Blob's `wasbs://` driver.
 
 ---
 
@@ -126,11 +153,30 @@ Transformations applied:
 - Deduplicate `dim_visitor` by `visitor_id`
 
 **Why Databricks over Synapse Spark Pools?**
-- More mature, stable PySpark environment
-- Better library support and notebook tooling
-- Superior job scheduling and cluster management
-- ADLS Gen2 integration is more reliable on Databricks
-- Native CI/CD via Databricks CLI
+- PySpark is a requirement for this project, and Databricks is the
+  leading managed Spark platform — no manual cluster setup, dependency
+  management, or infrastructure configuration
+- Built for medallion architecture — Databricks is purpose-designed for
+  Bronze → Silver → Gold layered processing, with Delta Lake format
+  providing ACID transactions, schema enforcement, and easy rollback
+  between layers
+- Native ADLS Gen2 integration — connects directly via `abfss://` driver
+  with no extra configuration, making reads and writes across medallion
+  layers seamless
+- Native Synapse integration — can write directly to Synapse SQL pools
+  at the end of the Gold layer, keeping the pipeline fully within the
+  Azure ecosystem
+- Scalable compute — clusters scale up or down based on workload,
+  important if visitor-level data grows significantly over the 7-day run
+- More mature, stable PySpark environment with better library support,
+  superior notebook tooling, job scheduling, and cluster management
+
+**CI/CD — Databricks**
+Notebooks stored as `.py` files in GitHub. A GitHub Actions workflow
+uses the Databricks CLI to automatically sync and deploy updated
+notebooks to the Databricks workspace on every push to `main`,
+ensuring production notebooks always reflect the latest code without
+manual intervention.
 
 ---
 
@@ -147,6 +193,11 @@ SELECT * FROM OPENROWSET(
 ) AS fmed;
 ```
 
+Synapse provides a clean, stable query layer that Power BI connects to
+for dashboards, and separates processing (Databricks) from reporting
+(Power BI), ensuring consistent dashboard performance regardless of
+pipeline activity.
+
 **Why Synapse Serverless over Dedicated Pool?**
 Data volume doesn't justify a dedicated pool. Serverless SQL reads
 Parquet directly from ADLS with no data movement or loading required,
@@ -155,36 +206,44 @@ and costs nothing when not queried.
 **Why not connect Power BI directly to ADLS or Databricks?**
 
 Connecting directly to ADLS:
-- Power BI is not designed to query raw Parquet files
-- No query engine — Power BI scans files itself on every refresh
-- No table-level access control
+- Power BI would be querying raw or semi-processed files — it's not
+  designed for this and would require heavy in-tool transformation just
+  to render a chart
+- Even with Parquet files, performance is unpredictable — without a
+  query engine, Power BI scans files itself on every refresh, which
+  degrades as data grows
+- No table-level access control — Synapse gives row/column level
+  security; Parquet files on ADLS are all-or-nothing folder permissions
 
 Connecting directly to Databricks:
-- Every dashboard refresh spins up a Databricks cluster
-- Cluster startup latency on every report load
-- Databricks is optimised for transformation, not repeated BI queries
-
-Synapse provides a stable, low-latency SQL layer purpose-built for BI tools.
+- Every dashboard refresh spins up a Databricks cluster — paying for
+  compute every time someone opens the dashboard
+- Cluster startup time adds latency to every report load
+- Databricks is optimised for transformation workloads, not serving
+  repeated low-latency queries to a BI tool
 
 ---
 
-### CI/CD
+### Reporting — Power BI (Optional)
 
-**Azure Functions**
-Deployed manually via Azure Functions Core Tools:
-```bash
-func azure functionapp publish wistia-ingestion-lm2 --python
-```
-Code is committed to GitHub for version control. A GitHub Actions
-workflow for automatic deployment was attempted but encountered issues
-with `WEBSITE_RUN_FROM_PACKAGE` causing read-only mode. VS Code
-deployment was used as the reliable alternative.
+Power BI connects directly to Synapse via native connector and sits on
+top of the dimensional model to surface video engagement insights for
+the marketing team.
 
-**Databricks Notebooks**
-`.py` notebook files are stored in `notebooks/` in GitHub.
-A GitHub Actions workflow uses the Databricks CLI to automatically
-sync and deploy updated notebooks to `/Workspace/Wistia` on every
-push to `main`.
+**Why Power BI?**
+- **Native Synapse connector** — connects to Synapse Serverless out of
+  the box with no custom configuration, making it the natural endpoint
+  for an Azure-only architecture
+- **Microsoft ecosystem** — since the entire stack is Azure, Power BI
+  is the natural choice. Authentication, permissions, and access control
+  all flow through the same Azure Active Directory, simplifying governance
+- **Marketing team friendly** — the end consumer of these dashboards is
+  the marketing team, not engineers. Power BI's drag-and-drop interface
+  means they can build and modify their own views without needing SQL or
+  Python knowledge
+- **Scheduled refresh** — Power BI can be configured to automatically
+  refresh dashboards after each daily pipeline run, ensuring the
+  marketing team always sees up-to-date engagement metrics
 
 ---
 
