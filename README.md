@@ -1,5 +1,10 @@
 # Wistia Video Analytics — End-to-End Azure Data Pipeline
 
+https://youtu.be/njy4wowDJUc 
+
+**[Watch Video Project Walkthrough](https://youtu.be/njy4wowDJUc)**
+
+
 An end-to-end data engineering pipeline that ingests video engagement analytics
 from the Wistia Stats API, transforms the data through a medallion architecture,
 and serves it via Azure Synapse Analytics.
