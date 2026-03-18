@@ -1,7 +1,5 @@
 # Wistia Video Analytics — End-to-End Azure Data Pipeline
 
-https://youtu.be/njy4wowDJUc 
-
 **[Watch Video Project Walkthrough](https://youtu.be/njy4wowDJUc)**
 
 
