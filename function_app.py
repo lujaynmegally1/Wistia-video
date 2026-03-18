@@ -21,50 +21,6 @@ WATERMARK_BLOB  = "watermark/last_ingested.txt"
 MAX_RETRIES   = 3
 RETRY_BACKOFF = 2  # exponential backoff: 2s, 4s, 8s
 
-# ── Timer Trigger ─────────────────────────────────────────────────
-# used for ingestion during development/testing, but we switched to ADF HTTP trigger for more control (e.g. retries, etc.)
-# @app.timer_trigger(schedule="0 0 8 * * *",
-#                    arg_name="myTimer",
-#                    run_on_startup=False)
-# def wistia_ingestion(myTimer: func.TimerRequest) -> None:
-#     logging.info("🚀 Wistia ingestion pipeline started")
-#     try:
-#         credential    = DefaultAzureCredential()
-#         secret_client = SecretClient(vault_url=KEY_VAULT_URL, credential=credential)
-#         try:
-#             API_TOKEN = secret_client.get_secret("wistia-api-token").value
-#             logging.info("✅ API fetched from Key Vault successfully")
-#         except Exception as e:
-#             logging.warning(f"⚠️ Key Vault api key fetching failed") 
-
-#         HEADERS     = {"Authorization": f"Bearer {API_TOKEN}"}
-#         adls_client = DataLakeServiceClient(
-#             account_url=f"https://{STORAGE_ACCOUNT}.dfs.core.windows.net",
-#             credential=credential
-#         )
-
-#         start_date = get_last_ingested_date(adls_client)
-#         end_date   = datetime.today().strftime("%Y-%m-%d")
-
-#         if start_date > end_date:
-#             logging.info("✅ Pipeline already up to date.")
-#             return
-
-#         logging.info(f"📅 Ingesting from {start_date} to {end_date}")
-
-#         for media_id in MEDIA_IDs:
-#             logging.info(f"{'='*50}")
-#             logging.info(f"Processing Media ID: {media_id}")
-#             run_ingestion_for_media(media_id, start_date, end_date, HEADERS, adls_client, logging.info)
-
-#         update_watermark(adls_client, end_date)
-#         logging.info("🎉 Ingestion complete!")
-
-#     except Exception as e:
-#         logging.error(f"❌ Execution Error: {e}")
-#         raise
-
-
 # ── ADF Production Ingest Trigger ────────────────────────────────
 @app.route(route="test", auth_level=func.AuthLevel.ANONYMOUS)
 def ingest_trigger(req: func.HttpRequest) -> func.HttpResponse:
