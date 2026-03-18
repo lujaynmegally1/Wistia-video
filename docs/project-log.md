@@ -133,42 +133,46 @@ the Connect To dropdown explicitly set to `wistia_gold` before running.
 
 ## Step 5 — Orchestration & CI/CD
 
-### ADF vs Timer Trigger 
-During development, an Azure Function timer trigger was used to run 
-ingestion daily at 8am UTC. This allowed the pipeline to run in 
-production for 7 consecutive days while the rest of the stack 
-(Databricks, Synapse, ADF) was being built out in parallel. The timer 
-trigger proved the incremental ingestion logic worked correctly — 
-watermark advancing daily, both media IDs processing, data landing in 
-ADLS partitions as expected.
+### Azure Data Factory Setup
+Created ADF resource `wistia-adf` in the `Wistia-analytics` resource 
+group. Launched ADF Studio and set up two linked services:
+- **REST linked service** (`ls_azure_function`) — connects to the Azure 
+  Function HTTP endpoint for ingestion
+- **Azure Databricks linked service** (`ls_databricks`) — connects to 
+  the Databricks workspace using a personal access token and existing 
+  interactive cluster
 
-Once ADF was set up and the full end-to-end pipeline (ingestion → 
-transformation → serving) was complete, the timer trigger was replaced 
-with an ADF schedule trigger for production orchestration.
+Built the pipeline `wistia_daily_pipeline` with two activities connected 
+in sequence:
+1. **Web Activity** (`ingest_wistia_data`) — calls the Azure Function 
+   `/api/test` endpoint to trigger ingestion
+2. **Databricks Notebook Activity** (`run_transformation`) — runs 
+   `wistia-video-gold` notebook, only executes if ingestion succeeds
 
-**Decision:** Replace Azure Function timer trigger with ADF schedule trigger.
+Added 2 retries per activity and set timeouts:
+- Web activity → 10 minutes
+- Databricks activity → 1 hour
 
-Reasons:
-- ADF provides visual monitoring of every pipeline run with per-activity 
-  status, duration, and error details — the timer trigger only exposed 
-  logs via Azure Function invocations tab
-- Built-in retry policies at activity level (2 retries per activity) 
-  without writing retry logic into the function itself
-- Activity-level timeouts configurable independently — ingestion capped 
-  at 10 minutes, Databricks notebook at 1 hour
-- Single place to see the full pipeline — ingestion + transformation 
-  visible and manageable in one ADF pipeline view
-- ADF schedule trigger supports tumbling window configuration with a 
-  defined start/end date — better suited for the 7-day production 
-  requirement than a simple cron expression
+Tested via **Trigger Now** in ADF Studio — both activities succeeded 
+end to end in under 5 minutes. Visible in the Monitor tab with 
+per-activity status and duration.
 
-The timer trigger code is kept in `function_app.py` as a commented-out 
-reference, documenting the development approach and providing a fallback 
-option if ADF is ever unavailable.
+Set up a daily schedule trigger `daily_8am_trigger` to run the full 
+pipeline at 8am UTC every day.
+
+**Note on Synapse:** Synapse does not need an ADF activity because the 
+views are virtual — they use OPENROWSET to read directly from ADLS. 
+When Databricks writes new gold Parquet files, Synapse views 
+automatically reflect the updated data on the next query. No refresh 
+or loading step needed.
+
+
+---
+
 ### Databricks CI/CD
 Notebooks exported as `.py` source files and stored in `notebooks/` folder.
 GitHub Actions workflow uses Databricks CLI to deploy on push to `main`:
 ```yaml
 databricks workspace import_dir notebooks /Workspace/Wistia --overwrite
 ```
-
+---
