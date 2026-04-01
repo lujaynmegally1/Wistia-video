@@ -10,10 +10,13 @@ and serves it via Azure Synapse Analytics.
 Built entirely on Azure using Python, PySpark, and GitHub Actions CI/CD.
 
 ---
+## Updated Architecture
+
+![Architecture Diagram](docs/images/architecture-diagram.png)
 
 ## Architecture
 
-![Architecture Diagram](docs/images/architecture-diagram.png)
+![Architecture Diagram](docs/images/architecture-diagram2.png)
 
 ---
 
