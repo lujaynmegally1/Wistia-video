@@ -16,7 +16,7 @@ Built entirely on Azure using Python, PySpark, and GitHub Actions CI/CD.
 
 ## Architecture
 
-![Architecture Diagram](docs/images/architecture-diagram2.png)
+![Architecture Diagram](docs/images/architecture-diagram-2.png)
 
 ---
 
