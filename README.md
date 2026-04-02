@@ -10,9 +10,21 @@ and serves it via Azure Synapse Analytics.
 Built entirely on Azure using Python, PySpark, and GitHub Actions CI/CD.
 
 ---
-## Edited Architecture (after feedback from SMEs)
+## Optimized Architecture (after SME Review)
 
 ![Architecture Diagram](docs/images/architecture-diagram.png)
+
+> Following SME review, the architecture was simplified to reduce complexity and align with industry best practices for Databricks-centric pipelines.
+> 
+> Changes Made:
+> * The original implementation used Azure Functions for API ingestion and Azure Data Factory for orchestration. While functional, these additional services introduced unnecessary complexity — more services mean more potential failure points, more credentials to manage, and more infrastructure to maintain.
+> * The revised architecture consolidates everything into Databricks.
+> * Azure Functions removed → move ingestion logic into a dedicated Databricks Python notebook, keeping all pipeline code in one place
+> * Azure Data Factory removed → replaced by Databricks Workflow Scheduler, which provides the same scheduling, monitoring, and retry capabilities natively within Databricks
+> * Parquet replaced with Delta tables → Delta is a proper table format with ACID transactions, schema enforcement, and time travel. Parquet is a file format, not a table — Delta is the industry standard for medallion architectures on Databricks
+> * One notebook per table → originally all transformations ran in a single notebook. Splitting into one notebook per table (dim_media, dim_visitor, fact_media_engagement_daily, fact_visitor_events) means a failure in one transformation doesn't block the others
+>
+> Note: These changes were not implemented due to time constraints 
 
 ## Architecture (project docs currently reflect this architecture) 
 
